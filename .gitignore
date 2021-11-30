@@ -1,0 +1,7 @@
+*.dat
+*.npz
+*.npy
+*.zip
+.vscode/
+data/
+__pycache__/

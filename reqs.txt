@@ -1,0 +1,11 @@
+numpy
+scipy
+pytorch
+torchvision
+pardiso4py
+matplotlib
+ipykernel
+pyoptsparse
+
+autopep8
+pandas
