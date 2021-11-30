@@ -60,9 +60,11 @@ class femDataGenFilterCut:
         self.fx[self.fixIdx] = 0.0
         self.fy[self.fixIdx] = 0.0
 
-    def genNextRho(self, rhocent=0.5,rhoflt=0.5):
+    def genNextRho(self, rhocent=0.5,rhoflt=0.5, useSupport = True):
         self.rhogen.genNext()
         self.rho = self.rhogen.getRandCutDown(datalo=0.5-rhocent,datahi=0.5+rhocent,fltrange=rhoflt)
+        if(useSupport):
+            self.rho = np.maximum(self.rho, self.fixRhoSupport)
 
     def fillData(self, nbnd, nrho, old_sav=False):
         self.datanbnd = nbnd
@@ -93,7 +95,7 @@ class femDataGenFilterCut:
                 fem.AssembleKbLocal()
                 
 
-                self.genNextRho(rhocent=self.rhocent,rhoflt=self.rhoflt)
+                self.genNextRho(rhocent=self.rhocent,rhoflt=self.rhoflt,useSupport=False)
                 fem.setRho(self.rho)
                 fem.AssembleRhoAb()
                 fem.SolveU()
@@ -101,6 +103,8 @@ class femDataGenFilterCut:
                 VMtest = fem.VM.max()
                 itest+=1
                 print('Ibnd %d test %d, maxvm  %g'%(ibnd, itest, VMtest))
+            print('Bnd Valid')
+            
             
             if old_sav:
                 bnddata[:,:,0] = self.fixData
@@ -115,6 +119,7 @@ class femDataGenFilterCut:
                 
                 VMtrial = 1e10
                 ntrial = 0
+                self.fixRhoSupport = self.bndgen.getBinarySupportRho()
                 while (VMtrial > self.VMselMax):
                     self.genNextRho(rhocent=self.rhocent,rhoflt=self.rhoflt)
                     fem.setRho(self.rho)

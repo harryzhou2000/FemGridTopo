@@ -1,14 +1,21 @@
 import numpy as np
 import time
 
-from numpy.core.function_base import linspace
+# from numpy.core.function_base import linspace
 import scipy.signal
-from scipy.signal.filter_design import ellipord
+# from scipy.signal.filter_design import ellipord
 
 
-
+##################################
+# globals
+##################################
 rng = np.random.default_rng()
 
+
+###################################################################################
+##################################
+# util funcs
+##################################
 def set_seed(seed=0):
     global rng
     rng = np.random.default_rng(seed=seed)
@@ -113,6 +120,14 @@ def randDFSMomentumBulk(nx,ny,nfill):
     
     return ret
 
+
+def combineRhoMax(rho1, rho2):
+    return np.maximum(rho1,rho2)
+
+#############################################################
+##################################
+# classes
+##################################
 class randFilterGen:
     def __init__(self, nx=64, ny=64, passes=[16,32,48,64], nskew=9, maxskew=10.0,ndirection=8) -> None:
         #filters: fil[ipass][iskew][idir]
@@ -178,7 +193,7 @@ class randBoundaryFilter1DGen(randFilterGen):
         self.filts1d = []
         for passsiz in passes:
             passfilts = gaussianWin1(passsiz)
-            self.filts.append(passfilts)
+            self.filts1d.append(passfilts)
         pass
 
     def genNext(self)->None:
@@ -207,10 +222,11 @@ class randBoundaryFilter1DGen(randFilterGen):
         self.genNextFilter()
         binFilted = scipy.signal.correlate2d(self.currentBinaryDouble,self.currentfilt,
             mode='same', boundary='fill' )
+        binFilted = scipy.signal.correlate2d(binFilted,np.ones((2,2)),mode='valid')
         binFiltedLo = binFilted.min()
         binFiltedHi = binFilted.max()
 
-        binFilted = (binFilted - binFiltedLo) * ((datahi-datalo)/(binFiltedHi-binFiltedLo)) + datalo
+        binFilted = (binFilted - binFiltedLo) * ((datahiU-dataloU)/(binFiltedHi-binFiltedLo)) + dataloU
         binFilted = np.minimum(binFilted, hi)
         binFilted = np.maximum(binFilted, lo)
         self.currentBinarySupport=binFilted
@@ -274,6 +290,6 @@ class randBoundaryFilter1DGen(randFilterGen):
         ret[self.ny+1:0:-1,0] = data[self.nx+self.ny+self.nx:self.nx+self.ny+self.nx+self.ny]
         return ret
         
-        
+
     
 
