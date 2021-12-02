@@ -6,12 +6,13 @@ import pandas as pd
 import os
 import time
 import re
+import pyoptsparse
 
 def caseStamp():
     return '%d_%d'%(round(time.time()), os.getpid())
 
 class femDataGenFilterCut:
-    def __init__(self,nx=64,ny=64,passes=[32,40,48,56,64],nskew=9,maxskew=10,ndir=8) -> None:
+    def __init__(self,nx=64,ny=64,passes=[32,40,48,56,64],nskew=9,maxskew=10,ndir=8, opterSeq = False) -> None:
         self.nx = nx
         self.ny = ny
         self.rhogen = femRandInput.randRhoFilterGen(nx=nx,ny=ny,passes=passes,nskew=nskew,
@@ -19,9 +20,9 @@ class femDataGenFilterCut:
         self.bndgen = femRandInput.randBoundaryFilter1DGen(nx=nx,ny=ny,passes=passes)
 
         self.data = [] #data[ibnd][0] = (fix,fx,fy), data[ibnd][1] = [rho0, rho1 ....], data[ibnd][2] = [[u0, v0], [u1, v1]]
-        self.fixth = 0.0
+        self.fixth = 0.3
         self.fixflt=0.9
-        self.forcecent = 0.6
+        self.forcecent = 0.9
         self.forceflt=0.8
         self.rhocent=0.5
         self.rhoflt=0.5
@@ -33,9 +34,19 @@ class femDataGenFilterCut:
         self.min_fixportion = 0.2
         self.min_minufixinterval = 0.035
         self.min_maxufixinterval = 0.25
+
+        #Use opter to Generate
+        self.bndgen.max_fixportion = 0.6
+        self.bndgen.min_fixportion = 0.1
+        self.bndgen.min_minufixinterval = 0.1
+        self.bndgen.min_maxufixinterval = 0.3
+        self.opterSeq = opterSeq
+        self.opterMax = 75
+        
+        
         pass
 
-    def genNextBnd(self, fixth=0.0, fixflt=0.6, forcecent=0.6, forceflt=0.8)->bool:
+    def genNextBnd(self, fixth=0.0, fixflt=0.6, forcecent=0.6, forceflt=0.8):
         portion, minuinterval, maxuinterval = -1.0,-1.0,-1.0
         while((portion < self.min_fixportion or portion > self.max_fixportion)
             or (minuinterval < self.min_minufixinterval or maxuinterval < self.min_maxufixinterval)):
@@ -70,80 +81,195 @@ class femDataGenFilterCut:
         self.datanbnd = nbnd
         self.datanrho = nrho
         if old_sav:
+            if(self.opterSeq):
+                raise(Exception('Can\'t old save with opterSeq'))
             self.data = [] #data[ibnd][0] = (fix,fx,fy), data[ibnd][1] = [rho0, rho1 ....], data[ibnd][2] = [[u0, v0], [u1, v1]]
         else:
             self.bnddata = np.empty(shape=(self.ny+1,self.nx+1,3,1,nbnd), dtype=np.float32)
             self.rhodata = np.empty(shape=(self.ny,self.nx,1,nrho,nbnd), dtype=np.float32)
             self.resdata = np.empty(shape=(self.ny+1,self.nx+1,2,nrho,nbnd), dtype=np.float32)
             self.vmdata = np.empty(shape=(self.ny,self.nx,1,nrho,nbnd), dtype=np.float32)
-
-        for ibnd in range(nbnd):
-            if old_sav:
-                bnddata = np.empty(shape=(self.ny+1,self.nx+1,3), dtype=np.float32)
-                rhodata = np.empty(shape=(self.ny,self.nx,1,nrho), dtype=np.float32)
-                resdata = np.empty(shape=(self.ny+1,self.nx+1,2,nrho), dtype=np.float32)
-                vmdata = np.empty(shape=(self.ny,self.nx,1,nrho), dtype=np.float32)
-
-            VMtest = 0.0
-            itest = 0
-            while(VMtest == 0.0):
-                self.genNextBnd(fixth=self.fixth, fixflt=self.fixflt, 
-                    forcecent=self.forcecent, forceflt=self.forceflt)
-                fem = femGTopo.isoGridFem2D(nx = self.nx, ny = self.ny)
-                fem.SetElemMat(4,4,1,0.3)
-                fem.setBCs(self.fix,self.fx,self.fy)
-                fem.AssembleKbLocal()
-                
-
-                self.genNextRho(rhocent=self.rhocent,rhoflt=self.rhoflt,useSupport=False)
-                fem.setRho(self.rho)
-                fem.AssembleRhoAb()
-                fem.SolveU()
-                fem.GetStress()
-                VMtest = fem.VM.max()
-                itest+=1
-                print('Ibnd %d test %d, maxvm  %g'%(ibnd, itest, VMtest))
-            print('Bnd Valid')
             
-            
-            if old_sav:
-                bnddata[:,:,0] = self.fixData
-                bnddata[:,:,1] = self.fx
-                bnddata[:,:,2] = self.fy
-            else:
-                self.bnddata[:,:,0,0,ibnd] = self.fixData
-                self.bnddata[:,:,1,0,ibnd] = self.fx
-                self.bnddata[:,:,2,0,ibnd] = self.fy
 
-            for irho in range(nrho):
-                
-                VMtrial = 1e10
-                ntrial = 0
-                self.fixRhoSupport = self.bndgen.getBinarySupportRho()
-                while (VMtrial > self.VMselMax):
-                    self.genNextRho(rhocent=self.rhocent,rhoflt=self.rhoflt)
+        if not self.opterSeq:
+            for ibnd in range(nbnd):
+                if old_sav:
+                    bnddata = np.empty(shape=(self.ny+1,self.nx+1,3), dtype=np.float32)
+                    rhodata = np.empty(shape=(self.ny,self.nx,1,nrho), dtype=np.float32)
+                    resdata = np.empty(shape=(self.ny+1,self.nx+1,2,nrho), dtype=np.float32)
+                    vmdata = np.empty(shape=(self.ny,self.nx,1,nrho), dtype=np.float32)
+
+                VMtest = 0.0
+                itest = 0
+                while(VMtest == 0.0):
+                    self.genNextBnd(fixth=self.fixth, fixflt=self.fixflt, 
+                        forcecent=self.forcecent, forceflt=self.forceflt)
+                    fem = femGTopo.isoGridFem2D(nx = self.nx, ny = self.ny)
+                    fem.SetElemMat(4,4,1,0.3)
+                    fem.setBCs(self.fix,self.fx,self.fy)
+                    fem.AssembleKbLocal()
+                    
+
+                    self.genNextRho(rhocent=self.rhocent,rhoflt=self.rhoflt,useSupport=False)
                     fem.setRho(self.rho)
                     fem.AssembleRhoAb()
                     fem.SolveU()
                     fem.GetStress()
-                    VMtrial = fem.VM.max()
-                    ntrial += 1
+                    VMtest = fem.VM.max()
+                    itest+=1
+                    print('Ibnd %d test %d, maxvm  %g'%(ibnd, itest, VMtest))
+                print('Bnd Valid')
                 
-                if(old_sav):
-                    rhodata[:,:,0,irho] = self.rho
-                    resdata[:,:,0,irho] = fem.uarray
-                    resdata[:,:,1,irho] = fem.varray
-                    vmdata[:,:,0,irho] = fem.VM
+                
+                if old_sav:
+                    bnddata[:,:,0] = self.fixData
+                    bnddata[:,:,1] = self.fx
+                    bnddata[:,:,2] = self.fy
                 else:
-                    self.rhodata[:,:,0,irho,ibnd] = self.rho
-                    self.resdata[:,:,0,irho,ibnd] = fem.uarray
-                    self.resdata[:,:,1,irho,ibnd] = fem.varray
-                    self.vmdata[:,:,0,irho,ibnd] = fem.VM
+                    self.bnddata[:,:,0,0,ibnd] = self.fixData
+                    self.bnddata[:,:,1,0,ibnd] = self.fx
+                    self.bnddata[:,:,2,0,ibnd] = self.fy
 
-                print("  Ibnd %4d ::: Irho %4d (ntri %2d) maxvm %.4e, maxu %.4e, maxv %.4e" % 
-                (ibnd, irho, ntrial, fem.VM.max(), np.abs(fem.uarray).max(), np.abs(fem.varray.max())))
-            if(old_sav):   
-                self.data.append((bnddata,rhodata,resdata,vmdata))
+                for irho in range(nrho):
+                    
+                    VMtrial = 1e10
+                    ntrial = 0
+                    self.fixRhoSupport = self.bndgen.getBinarySupportRho()
+                    while (VMtrial > self.VMselMax):
+                        self.genNextRho(rhocent=self.rhocent,rhoflt=self.rhoflt)
+                        fem.setRho(self.rho)
+                        fem.AssembleRhoAb()
+                        fem.SolveU()
+                        fem.GetStress()
+                        VMtrial = fem.VM.max()
+                        ntrial += 1
+                    
+                    
+                    if(old_sav):
+                        rhodata[:,:,0,irho] = self.rho
+                        resdata[:,:,0,irho] = fem.uarray
+                        resdata[:,:,1,irho] = fem.varray
+                        vmdata[:,:,0,irho] = fem.VM
+                    else:
+                        self.rhodata[:,:,0,irho,ibnd] = self.rho
+                        self.resdata[:,:,0,irho,ibnd] = fem.uarray
+                        self.resdata[:,:,1,irho,ibnd] = fem.varray
+                        self.vmdata[:,:,0,irho,ibnd] = fem.VM
+
+                    print("  Ibnd %4d ::: Irho %4d (ntri %2d) maxvm %.4e, maxu %.4e, maxv %.4e" % 
+                    (ibnd, irho, ntrial, fem.VM.max(), np.abs(fem.uarray).max(), np.abs(fem.varray.max())))
+                if(old_sav):   
+                    self.data.append((bnddata,rhodata,resdata,vmdata))
+        else:
+            if(self.opterMax < nrho):
+                raise(ValueError('nrho too large, recommended: %d'%(self.opterMax/5)+1))
+            collectStride = np.int32(np.ceil(self.opterMax/(nrho-1)))
+            for ibnd in range(nbnd):
+                VMtest = 0.0
+                itest = 0
+                while(VMtest == 0.0):
+                    self.bndgen.genNextBnd(fixth=self.fixth, fixflt=self.fixflt, 
+                        forcecent=self.forcecent, forceflt=self.forceflt)
+                    fem = femGTopo.isoGridFem2D(nx = self.nx, ny = self.ny)
+                    fem.SetElemMat(4,4,1,0.3)
+                    fem.setBCs(self.bndgen.fix,self.bndgen.fx,self.bndgen.fy)
+                    fem.AssembleKbLocal()
+                    
+
+                    self.genNextRho(rhocent=self.rhocent,rhoflt=self.rhoflt,useSupport=False)
+                    fem.setRho(self.rho)
+                    fem.AssembleRhoAb()
+                    fem.SolveU()
+                    fem.GetStress()
+                    VMtest = fem.VM.max()
+                    itest+=1
+                    print('Ibnd %d test %d, maxvm  %g'%(ibnd, itest, VMtest))
+                print('Bnd Valid')
+                
+                self.bnddata[:,:,0,0,ibnd] = self.bndgen.fixData
+                self.bnddata[:,:,1,0,ibnd] = self.bndgen.fx
+                self.bnddata[:,:,2,0,ibnd] = self.bndgen.fy
+
+                femF = femGTopo.isoGridFem2DOptFun(10000, self.nx, self.ny, 1., 1.)
+                vset =  self.bndgen.currentForceFraction * 0.4 
+                rho0 = np.ones((self.ny, self.nx)) * vset
+                femF.SetElemMat()
+                femF.setBCs( self.bndgen.fix,  self.bndgen.fx,  self.bndgen.fy)
+                femF.AssembleKbLocal()
+                femF.Eval(rho0,useVM = False)
+                femF.evalMax = self.opterMax
+
+                def objfuncs(xdict):
+                    rho = np.array(xdict["rho"]).reshape((self.ny, self.nx),order="C")
+                    femF.EvalVM(rho, useVM=True, storeRhoSeq = True)
+                    funcs = {}
+                    funcs["PI_AB"] = femF.PI_AB
+                    funcs["vol"] = np.mean(rho)
+                    fail = False
+                    return funcs, fail
+                def sensfuncs(xdict, fdict):
+                    sens = {}
+                    rho = np.array(xdict["rho"]).reshape((self.ny,self.nx),order="C")
+                    femF.EvalVMdiff(rho, useVM=False, storeRhoSeq = False)
+                    femF.FilterABdiff()
+                    sens["PI_AB"] = {}
+                    sens["PI_AB"]["rho"] = femF.dPI_ABdrho.reshape((1,self.ny*self.nx),order="C")
+                    return sens
+                opt = pyoptsparse.Optimization("FEMGTOPO",objFun=objfuncs)
+                opt.addVarGroup(
+                    "rho",
+                    nVars=self.nx * self.ny,
+                    varType="c",
+                    value=vset,
+                    lower=1e-3,
+                    upper=1.0,
+                    scale=1.0,
+                    offset=0.0,
+                )
+                opt.addConGroup(
+                    "vol",
+                    nCon=1,
+                    lower=vset,
+                    upper=vset,
+                    scale=1.0,
+                    linear=True,
+                    jac={"rho": np.ones((1, self.nx * self.ny))/(self.nx * self.ny)},
+                )
+                opt.addObj(name="PI_AB" )
+                options = {}
+                options['print_level']=0
+                options['tol'] = 1e-5
+                options['max_iter'] = self.opterMax*2
+                opter = pyoptsparse.OPT("IPOPT", options = options)
+                sol = opter(opt, sens=sensfuncs)
+                solStatus = sol.optInform['value']
+                nvaliddata = len(femF.rhoSeq)
+                print('=== === === === === === ===')
+                print('=== OPTER  RETURNED %3d ==='% (solStatus))
+                print('=== COLLECTED DATA %4d ===' % (nvaliddata))
+                print('=== === === === === === ===')
+
+                
+                collectStrideC = collectStride
+                if(nvaliddata < self.opterMax):
+                    collectStrideC = np.int32(np.ceil(nvaliddata/(nrho-1)))
+
+                for irho in range(nrho):
+                    icollect = np.mod(nvaliddata -1 -irho * collectStrideC, nvaliddata,dtype=np.int32)
+                    if irho == nrho-1:
+                        icollect = 0
+                    self.rhodata[:,:,0,irho,ibnd] = femF.rhoSeq[icollect][0]
+                    self.resdata[:,:,0,irho,ibnd] = femF.rhoSeq[icollect][1]
+                    self.resdata[:,:,1,irho,ibnd] = femF.rhoSeq[icollect][2]
+                    self.vmdata[:,:,0,irho,ibnd] = femF.rhoSeq[icollect][4]
+                    print("  Ibnd %4d ::: Irho %4d (icollect %3d) maxvm %.4e, maxu %.4e, maxv %.4e" % 
+                    (
+                        ibnd, irho, icollect, 
+                        femF.rhoSeq[icollect][4].max(), 
+                        np.abs(femF.rhoSeq[icollect][1]).max(), 
+                        np.abs(femF.rhoSeq[icollect][2]).max()
+                    ))
+                
         # if(not old_sav):
         #     self.dataSeq.append((self.bnddata,self.rhodata,self.resdata, self.vmdata))
         # pass

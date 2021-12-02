@@ -194,6 +194,10 @@ class randBoundaryFilter1DGen(randFilterGen):
         for passsiz in passes:
             passfilts = gaussianWin1(passsiz)
             self.filts1d.append(passfilts)
+        self.max_fixportion = 0.6
+        self.min_fixportion = 0.1
+        self.min_minufixinterval = 0.1
+        self.min_maxufixinterval = 0.3
         pass
 
     def genNext(self)->None:
@@ -269,9 +273,15 @@ class randBoundaryFilter1DGen(randFilterGen):
         idxbndr = np.roll(idxbndc,-1,axis=0)
         sizIntervals = idxbndr - idxbndc
         sizIntervals[-1] += np.size(dBdiff)
-        sizinterval0 = sizIntervals[diffbndc<0] 
+        interval0=diffbndc<0
+        sizinterval0 = sizIntervals[interval0] 
+        idxbndc0 = idxbndc[interval0]
+        idxbndr0 = idxbndr[interval0]
         maxInterval = sizinterval0.max()/np.size(self.dataBinaryCurrent)
         minInterval = sizinterval0.min()/np.size(self.dataBinaryCurrent)
+
+        self.currentBinary0Leftt =idxbndc0 
+        self.currentBinary0Right =idxbndr0 
 
         #return portion of 1, max,mininterval of 0
         return(portion, maxInterval, minInterval)
@@ -289,6 +299,65 @@ class randBoundaryFilter1DGen(randFilterGen):
         ret[-1,self.nx+1:0:-1] = data[self.nx+self.ny:self.nx+self.ny+self.nx]
         ret[self.ny+1:0:-1,0] = data[self.nx+self.ny+self.nx:self.nx+self.ny+self.nx+self.ny]
         return ret
+
+    def genNextBnd(self, fixth=0.0, fixflt=0.6, forcecent=0.6, forceflt=0.8, fselectInterval = True):
+        portion, minuinterval, maxuinterval = -1.0,-1.0,-1.0
+        while((portion < self.min_fixportion or portion > self.max_fixportion)
+            or (minuinterval < self.min_minufixinterval or maxuinterval < self.min_maxufixinterval)):
+            self.genNext()
+            self.fixData,self.fixIdx = self.getBinaryMat(th=fixth,fltrange=fixflt)
+            portion, maxuinterval, minuinterval =  self.examineBinaryPortion()
+            print('Generated Fix Bnd F[%.2g] Iup[%.2g] Ilo[%.2g]'%(portion,maxuinterval,minuinterval))
+
+        
+
+        # self.fixIdx = self.fixData==1.0
+        self.fix = np.empty_like(self.fixData)
+        self.fix.fill(np.nan)
+        self.fix[self.fixIdx] = 0.0
+        
+
+        self.genNext()
+        self.fx = self.getRandCutDownMat(fltrange=forceflt,datalo=-forcecent,datahi=forcecent)
+        self.genNext()
+        self.fy = self.getRandCutDownMat(fltrange=forceflt,datalo=-forcecent,datahi=forcecent)
+
+        self.fx[self.fixIdx] = 0.0
+        self.fy[self.fixIdx] = 0.0
+        self.currentForceFraction = 1 - portion
+
+        if(fselectInterval):
+            iselect = rng.integers(0,len(self.currentBinary0Leftt))
+            self.currentForceFraction = -1.0
+            while self.currentForceFraction < 0.499*(maxuinterval + minuinterval):
+                bL = self.currentBinary0Leftt[iselect]
+                bR = self.currentBinary0Right[iselect]
+                if(bL<bR):
+                    L = bR-bL
+                else:
+                    L = bR-bL +self.nb
+                self.currentForceFraction = L/self.nb
+                iselect = np.mod(iselect+1, len(self.currentBinary0Leftt))
+            
+            if(bL < bR):
+                bmask = np.zeros((np.size(self.dataBinaryCurrent)))
+                bmask[bL+1:bR+1] = 1
+            else:
+                bmask = np.ones((np.size(self.dataBinaryCurrent)))
+                bmask[bR+1:bL+1] = 0
+
+            bmaskM = self.Data2Mat(bmask)
+            bmaskMe0 = bmaskM==0
+            self.fx[bmaskMe0] = 0.0
+            self.fy[bmaskMe0] = 0.0
+
+            
+
+        self.fx /= np.max(np.abs(self.fx))
+        self.fy /= np.max(np.abs(self.fy))
+        print('Valid Generation Bnd F[%.2g] Iup[%.2g] Ilo[%.2g] ForceFrac[%.2g]'%(portion,maxuinterval,minuinterval,self.currentForceFraction))
+
+
         
 
     

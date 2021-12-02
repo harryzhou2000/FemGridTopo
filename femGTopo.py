@@ -10,7 +10,9 @@ import os
 import copy
 
 
+
 import pyoptsparse
+import femRandInput
 
 
 class planarElem:
@@ -109,7 +111,7 @@ class isoGridFem2D:
         self.uglob = numpy.empty((self.ndof))
         self.bglob = numpy.zeros(self.ndof)
 
-        self.zeroT = 1e-5
+        self.zeroT = 1e-3
         self.penalty = 3.0
 
         pass
@@ -328,19 +330,25 @@ def Pnorm_diff(x, p):
 
 
 class isoGridFem2DOptFun(isoGridFem2D):
-    def __init__(self, pVM=1000, nx=100, ny=100, Lx=1, Ly=1) -> None:
+    def __init__(self, pVM=1000, nx=100, ny=100, Lx=1, Ly=1, nfilt = 5) -> None:
         super().__init__(nx=nx, ny=ny, Lx=Lx, Ly=Ly)
         self.pVM = pVM
         self.dPI_VMdU = numpy.empty_like(self.uglob)
         self.dPI_VMdrho = numpy.empty_like(self.xcm)
         self.dPI_ABdrho = numpy.empty_like(self.xcm)
 
-        self.ABfilter = numpy.ones((3, 3))
-        self.ABfilter[:,1] = 2
-        self.ABfilter[1,:] = 2
-        self.ABfilter[1,1] = 5
+        # self.ABfilter = numpy.ones((3, 3))
+        # self.ABfilter[:,1] = 1
+        # self.ABfilter[1,:] = 1
+        # self.ABfilter[1,1] = 1
+        # self.ABfilter = self.ABfilter / numpy.sum(self.ABfilter)
 
-        self.ABfilter = self.ABfilter / numpy.sum(self.ABfilter)
+        self.ABfilter = femRandInput.gaussianWin2(nfilt,nfilt)
+
+        
+        self.rhoSeq = []
+        self.evalMax = -1
+        self.neval = 0
 
     def SetElemMat(self, nnode=4, nint=4, E=1, nu=0.3) -> None:
         return super().SetElemMat(nnode=nnode, nint=nint, E=E, nu=nu)
@@ -351,48 +359,89 @@ class isoGridFem2DOptFun(isoGridFem2D):
     def AssembleKbLocal(self) -> None:
         return super().AssembleKbLocal()
 
-    def EvalVM(self, rho):
+    def EvalVM(self, rho, useVM = True, storeRhoSeq = False):
+        if(self.neval > self.evalMax and self.evalMax > 0):
+            print('Exceed Jump')
+            return
+        
         self.setRho(rho)
         self.AssembleRhoAb()
         self.SolveU()
-        self.GetStress()
-
-        # get diff for PI_VM
-        self.PI_VM = Pnorm(self.VM, self.pVM)
+        if(useVM):
+            self.GetStress()
+            self.PI_VM = Pnorm(self.VM, self.pVM)
+            
         self.PI_AB = numpy.dot(self.uglob, self.bglob)
 
-    def EvalVMdiff(self, rho):  # refrence
-        self.rho = rho
-        self.dPI_VMdVM = Pnorm_diff(self.VM, self.pVM)
-        self.dPI_VMdU.fill(0.0)
-        for iy in range(self.ny):
-            for ix in range(self.nx):
-                ie = iy * self.nx + ix
-                sigma = self.Bstemp @ self.uglob[self.idoflocal[ie]]
-                dPI_VMdUlocal = (
-                    J2_2d_diff(sigma, self.VM[iy, ix]) * self.dPI_VMdVM[iy, ix]
-                ) @ self.Bstemp  # * self.rho[iy,ix]
-                self.dPI_VMdU[self.idoflocal[ie]] += dPI_VMdUlocal
-        self.dPI_VM_dKij_j = -pypardiso.spsolve(self.Kglob, self.dPI_VMdU)  # outer u
-        self.dPI_VMdrho.fill(0.0)
+        self.neval += 1
 
-        for iy in range(self.ny):
-            for ix in range(self.nx):
-                ie = iy * self.nx + ix
-                # print(self.idoflocal[ie])
-                localdofs = self.idoflocal[ie]
-                ulocal = self.uglob[localdofs]
-                rholocalp = (
-                    numpy.power(self.rho[iy, ix], self.penalty - 1) * self.penalty
-                )
-                dPI_VM_dKlocal = numpy.outer(ulocal, self.dPI_VM_dKij_j[localdofs])
-                dPI_VM_drholocal = (
-                    numpy.sum(self.Klocal[ie] * dPI_VM_dKlocal) * rholocalp
-                )
-                self.dPI_VMdrho[iy, ix] = dPI_VM_drholocal
-                self.dPI_ABdrho[iy, ix] = ulocal.dot((self.Klocal[ie] @ ulocal)) * (
-                    -rholocalp
-                )
+        if storeRhoSeq:
+            if useVM:
+                self.rhoSeq.append((copy.deepcopy(rho),copy.deepcopy(self.uarray), copy.deepcopy(self.varray), copy.deepcopy(self.PI_AB), copy.deepcopy(self.VM)))
+            else:
+                self.rhoSeq.append((copy.deepcopy(rho),copy.deepcopy(self.uarray), copy.deepcopy(self.varray), copy.deepcopy(self.PI_AB)))
+
+
+
+    def EvalVMdiff(self, rho, useVM = True, storeRhoSeq = False):  # refrence
+        self.rho = rho
+        if(self.neval > self.evalMax and self.evalMax > 0):
+            self.dPI_ABdrho.fill(0.0)
+            if(useVM):
+                self.dPI_VMdrho.fill(0.0)
+            return
+        
+        if(useVM):
+            self.dPI_VMdVM = Pnorm_diff(self.VM, self.pVM)
+            self.dPI_VMdU.fill(0.0)
+            for iy in range(self.ny):
+                for ix in range(self.nx):
+                    ie = iy * self.nx + ix
+                    sigma = self.Bstemp @ self.uglob[self.idoflocal[ie]]
+                    dPI_VMdUlocal = (
+                        J2_2d_diff(sigma, self.VM[iy, ix]) * self.dPI_VMdVM[iy, ix]
+                    ) @ self.Bstemp  # * self.rho[iy,ix]
+                    self.dPI_VMdU[self.idoflocal[ie]] += dPI_VMdUlocal
+            self.dPI_VM_dKij_j = -pypardiso.spsolve(self.Kglob, self.dPI_VMdU)  # outer u
+            self.dPI_VMdrho.fill(0.0)
+
+            for iy in range(self.ny):
+                for ix in range(self.nx):
+                    ie = iy * self.nx + ix
+                    # print(self.idoflocal[ie])
+                    localdofs = self.idoflocal[ie]
+                    ulocal = self.uglob[localdofs]
+                    rholocalp = (
+                        numpy.power(self.rho[iy, ix], self.penalty - 1) * self.penalty
+                    )
+                    dPI_VM_dKlocal = numpy.outer(ulocal, self.dPI_VM_dKij_j[localdofs])
+                    dPI_VM_drholocal = (
+                        numpy.sum(self.Klocal[ie] * dPI_VM_dKlocal) * rholocalp
+                    )
+                    self.dPI_VMdrho[iy, ix] = dPI_VM_drholocal
+                    self.dPI_ABdrho[iy, ix] = ulocal.dot((self.Klocal[ie] @ ulocal)) * (
+                        -rholocalp
+                    )
+        else: #only AB
+            for iy in range(self.ny):
+                for ix in range(self.nx):
+                    ie = iy * self.nx + ix
+                    # print(self.idoflocal[ie])
+                    localdofs = self.idoflocal[ie]
+                    ulocal = self.uglob[localdofs]
+                    rholocalp = (
+                        numpy.power(self.rho[iy, ix], self.penalty - 1) * self.penalty
+                    )
+                    self.dPI_ABdrho[iy, ix] = ulocal.dot((self.Klocal[ie] @ ulocal)) * (
+                        -rholocalp
+                    )
+
+        if storeRhoSeq:
+            if useVM:
+                self.rhoSeq.append((copy.deepcopy(rho), copy.deepcopy(self.uarray), copy.deepcopy(self.varray), copy.deepcopy(self.VM)))
+            else:
+                self.rhoSeq.append((copy.deepcopy(rho), copy.deepcopy(self.uarray), copy.deepcopy(self.varray)))
+        
 
         # dPI_AB_dKij_j = u, alas (u @ uT) @@ K === uT @ k @ u = dPI_AB_Drho
 
@@ -401,9 +450,9 @@ class isoGridFem2DOptFun(isoGridFem2D):
             self.dPI_ABdrho, self.ABfilter, mode="same", boundary="symm"
         )
 
-    def Eval(self, rho):
-        self.EvalVM(rho)
-        self.EvalVMdiff(rho)
+    def Eval(self, rho, useVM = True):
+        self.EvalVM(rho, useVM=useVM)
+        self.EvalVMdiff(rho, useVM=useVM)
 
 
 class topoStressOptimizer:
@@ -428,7 +477,7 @@ class topoStressOptimizer:
         self.femF.Eval(self.rho)
 
     def Step(self, LR):
-        self.gradValid = -(self.femF.dPI_VMdrho - numpy.mean(self.femF.dPI_VM_dKij_j))
+        self.gradValid = -(self.femF.dPI_VMdrho - numpy.mean(self.femF.dPI_VMdrho))
         if not self.ifRunning:
             self.LgradValid0 = numpy.sum(self.gradValid ** 2) ** (0.5)
             self.ifRunning = True
@@ -443,3 +492,47 @@ class topoStressOptimizer:
         self.rho = self.rho / numpy.mean(self.rho) * self.vlim
         self.femF.Eval(self.rho)
 
+class topoStiffOptimizer:
+    def __init__(self) -> None:
+
+        pass
+
+    def InitFunc(
+        self, fix, fx, fy, pVM=1000, nx=64, ny=64, Lx=1, Ly=1, E=1.0, nu=0.3,
+    ) -> None:
+        self.femF = isoGridFem2DOptFun(pVM, nx, ny, Lx, Ly)
+        self.femF.SetElemMat(4, 4, E, nu)
+        self.femF.setBCs(fix=fix, fx=fx, fy=fy)
+        self.femF.AssembleKbLocal()
+        self.ifRunning = False
+
+    def InitRho(self, volume):
+        self.vlim = volume
+        self.rho = numpy.empty_like(self.femF.xcm)
+        self.rho.fill(volume)
+        self.ifRunning = False
+        self.femF.Eval(self.rho, useVM=False)
+
+    
+
+    def Step(self, LR):
+        self.gradValid = -(self.femF.dPI_VMdrho - numpy.mean(self.femF.dPI_ABdrho ))
+        if not self.ifRunning:
+            # self.LgradValid0 = numpy.sum(self.gradValid ** 2) ** (0.5)
+            self.MgradValid0 = numpy.abs(self.gradValid).max()
+            self.LRscale = self.MgradValid0/LR * 0.05
+            self.ifRunning = True
+        self.MgradValid = numpy.max(numpy.abs(self.gradValid))
+        # self.gradValid *= LR / self.LgradValid0
+        self.gradValid *= LR * self.LRscale
+        if self.MgradValid > 0.05:
+            self.gradValid *= 0.05 / self.MgradValid
+        self.rhonew =  self.rho + self.gradValid
+        self.rhonew = numpy.maximum(self.rho, self.femF.zeroT)
+        self.rhonew = numpy.minimum(self.rho, 1.000)
+
+        self.rhoInc = self.rhonew - self.rho
+        self.rhoInc = self.rhoInc - numpy.mean(self.rhoInc)
+        # self.rho = self.rho / numpy.mean(self.rho) * self.vlim
+        self.femF.Eval(self.rho, useVM=False)
+        
