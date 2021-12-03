@@ -7,6 +7,7 @@ import os
 import time
 import re
 import pyoptsparse
+import sys
 
 def caseStamp():
     return '%d_%d'%(round(time.time()), os.getpid())
@@ -164,9 +165,12 @@ class femDataGenFilterCut:
             if(self.opterMax < nrho):
                 raise(ValueError('nrho too large, recommended: %d'%(self.opterMax/5)+1))
             collectStride = np.int32(np.ceil(self.opterMax/(nrho-1)))
+            
             for ibnd in range(nbnd):
+                Tstart = time.perf_counter()
                 VMtest = 0.0
                 itest = 0
+                
                 while(VMtest == 0.0):
                     self.bndgen.genNextBnd(fixth=self.fixth, fixflt=self.fixflt, 
                         forcecent=self.forcecent, forceflt=self.forceflt)
@@ -269,7 +273,13 @@ class femDataGenFilterCut:
                         np.abs(femF.rhoSeq[icollect][1]).max(), 
                         np.abs(femF.rhoSeq[icollect][2]).max()
                     ))
-                
+            
+                Tend = time.perf_counter()
+                Tbnd = Tend - Tstart
+                print("Bnd Time [%10.3g], ETA [%10.3g]\n\n\n"%(Tbnd, Tbnd * (nbnd-ibnd-1)))
+                sys.stdout.flush()
+
+
         # if(not old_sav):
         #     self.dataSeq.append((self.bnddata,self.rhodata,self.resdata, self.vmdata))
         # pass
