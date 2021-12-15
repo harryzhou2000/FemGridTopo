@@ -1,1 +1,1 @@
-python ./runDataGen.py --seed=1 --name=OPT00 --nbnd=1024 --UseOpt
+python ./runDataGen.py --seed=101 --name=OPT01 --nbnd=1024 --UseOpt

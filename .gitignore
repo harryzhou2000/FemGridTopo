@@ -4,4 +4,5 @@
 *.zip
 .vscode/
 data/
+saves/
 __pycache__/

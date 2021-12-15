@@ -373,9 +373,10 @@ class isoGridFem2DOptFun(isoGridFem2D):
             
         self.PI_AB = numpy.dot(self.uglob, self.bglob)
 
-        self.neval += 1
+        
 
         if storeRhoSeq:
+            self.neval += 1
             if useVM:
                 self.rhoSeq.append((copy.deepcopy(rho),copy.deepcopy(self.uarray), copy.deepcopy(self.varray), copy.deepcopy(self.PI_AB), copy.deepcopy(self.VM)))
             else:
@@ -383,8 +384,11 @@ class isoGridFem2DOptFun(isoGridFem2D):
 
 
 
-    def EvalVMdiff(self, rho, useVM = True, storeRhoSeq = False):  # refrence
+    def EvalVMdiff(self, rho, useVM = True, storeRhoSeq = False, storeVM = False):  # refrence
         self.rho = rho
+        if(self.neval > self.evalMax and self.evalMax > 0):
+            print('Exceed Jump')
+            return
         if(self.neval > self.evalMax and self.evalMax > 0):
             self.dPI_ABdrho.fill(0.0)
             if(useVM):
@@ -437,10 +441,11 @@ class isoGridFem2DOptFun(isoGridFem2D):
                     )
 
         if storeRhoSeq:
-            if useVM:
-                self.rhoSeq.append((copy.deepcopy(rho), copy.deepcopy(self.uarray), copy.deepcopy(self.varray), copy.deepcopy(self.VM)))
+            self.neval += 1
+            if storeVM:
+                self.rhoSeq.append((copy.deepcopy(rho), copy.deepcopy(self.uarray), copy.deepcopy(self.varray), copy.deepcopy(self.PI_AB), copy.deepcopy(self.VM), copy.deepcopy(self.dPI_ABdrho)))
             else:
-                self.rhoSeq.append((copy.deepcopy(rho), copy.deepcopy(self.uarray), copy.deepcopy(self.varray)))
+                self.rhoSeq.append((copy.deepcopy(rho), copy.deepcopy(self.uarray), copy.deepcopy(self.varray), copy.deepcopy(self.PI_AB), copy.deepcopy(self.dPI_ABdrho)))
         
 
         # dPI_AB_dKij_j = u, alas (u @ uT) @@ K === uT @ k @ u = dPI_AB_Drho

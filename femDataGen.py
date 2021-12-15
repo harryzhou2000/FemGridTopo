@@ -27,7 +27,7 @@ class femDataGenFilterCut:
         self.forceflt=0.8
         self.rhocent=0.5
         self.rhoflt=0.5
-        self.VMselMax =1e5
+        self.VMselMax = 1e5
         self.dataSeq = []
 
         #for fix selection
@@ -90,6 +90,7 @@ class femDataGenFilterCut:
             self.rhodata = np.empty(shape=(self.ny,self.nx,1,nrho,nbnd), dtype=np.float32)
             self.resdata = np.empty(shape=(self.ny+1,self.nx+1,2,nrho,nbnd), dtype=np.float32)
             self.vmdata = np.empty(shape=(self.ny,self.nx,1,nrho,nbnd), dtype=np.float32)
+            self.drhodABdata = np.empty(shape=(self.ny,self.nx,1,nrho,nbnd), dtype=np.float32)
             
 
         if not self.opterSeq:
@@ -99,13 +100,14 @@ class femDataGenFilterCut:
                     rhodata = np.empty(shape=(self.ny,self.nx,1,nrho), dtype=np.float32)
                     resdata = np.empty(shape=(self.ny+1,self.nx+1,2,nrho), dtype=np.float32)
                     vmdata = np.empty(shape=(self.ny,self.nx,1,nrho), dtype=np.float32)
+                    drhodABdata = np.empty(shape=(self.ny,self.nx,1,nrho), dtype=np.float32)
 
                 VMtest = 0.0
                 itest = 0
                 while(VMtest == 0.0):
                     self.genNextBnd(fixth=self.fixth, fixflt=self.fixflt, 
                         forcecent=self.forcecent, forceflt=self.forceflt)
-                    fem = femGTopo.isoGridFem2D(nx = self.nx, ny = self.ny)
+                    fem = femGTopo.isoGridFem2DOptFun(nx = self.nx, ny = self.ny)
                     fem.SetElemMat(4,4,1,0.3)
                     fem.setBCs(self.fix,self.fx,self.fy)
                     fem.AssembleKbLocal()
@@ -116,6 +118,7 @@ class femDataGenFilterCut:
                     fem.AssembleRhoAb()
                     fem.SolveU()
                     fem.GetStress()
+                    
                     VMtest = fem.VM.max()
                     itest+=1
                     print('Ibnd %d test %d, maxvm  %g'%(ibnd, itest, VMtest))
@@ -142,6 +145,7 @@ class femDataGenFilterCut:
                         fem.AssembleRhoAb()
                         fem.SolveU()
                         fem.GetStress()
+                        fem.EvalVMdiff(self.rho, useVM=False, storeRhoSeq= False)
                         VMtrial = fem.VM.max()
                         ntrial += 1
                     
@@ -151,16 +155,18 @@ class femDataGenFilterCut:
                         resdata[:,:,0,irho] = fem.uarray
                         resdata[:,:,1,irho] = fem.varray
                         vmdata[:,:,0,irho] = fem.VM
+                        drhodABdata[:,:,0,irho] = fem.dPI_ABdrho
                     else:
                         self.rhodata[:,:,0,irho,ibnd] = self.rho
                         self.resdata[:,:,0,irho,ibnd] = fem.uarray
                         self.resdata[:,:,1,irho,ibnd] = fem.varray
                         self.vmdata[:,:,0,irho,ibnd] = fem.VM
+                        self.drhodABdata[:,:,0,irho,ibnd] = fem.dPI_ABdrho
 
                     print("  Ibnd %4d ::: Irho %4d (ntri %2d) maxvm %.4e, maxu %.4e, maxv %.4e" % 
                     (ibnd, irho, ntrial, fem.VM.max(), np.abs(fem.uarray).max(), np.abs(fem.varray.max())))
                 if(old_sav):   
-                    self.data.append((bnddata,rhodata,resdata,vmdata))
+                    self.data.append((bnddata,rhodata,resdata,vmdata,drhodABdata))
         else:
             if(self.opterMax < nrho):
                 raise(ValueError('nrho too large, recommended: %d'%(self.opterMax/5)+1))
@@ -205,7 +211,7 @@ class femDataGenFilterCut:
 
                 def objfuncs(xdict):
                     rho = np.array(xdict["rho"]).reshape((self.ny, self.nx),order="C")
-                    femF.EvalVM(rho, useVM=True, storeRhoSeq = True)
+                    femF.EvalVM(rho, useVM=True, storeRhoSeq = False)
                     funcs = {}
                     funcs["PI_AB"] = femF.PI_AB
                     funcs["vol"] = np.mean(rho)
@@ -214,7 +220,7 @@ class femDataGenFilterCut:
                 def sensfuncs(xdict, fdict):
                     sens = {}
                     rho = np.array(xdict["rho"]).reshape((self.ny,self.nx),order="C")
-                    femF.EvalVMdiff(rho, useVM=False, storeRhoSeq = False)
+                    femF.EvalVMdiff(rho, useVM=False, storeRhoSeq = True, storeVM= True)
                     femF.FilterABdiff()
                     sens["PI_AB"] = {}
                     sens["PI_AB"]["rho"] = femF.dPI_ABdrho.reshape((1,self.ny*self.nx),order="C")
@@ -266,6 +272,8 @@ class femDataGenFilterCut:
                     self.resdata[:,:,0,irho,ibnd] = femF.rhoSeq[icollect][1]
                     self.resdata[:,:,1,irho,ibnd] = femF.rhoSeq[icollect][2]
                     self.vmdata[:,:,0,irho,ibnd] = femF.rhoSeq[icollect][4]
+                    self.drhodABdata[:,:,0,irho,ibnd] = femF.rhoSeq[icollect][5]
+
                     print("  Ibnd %4d ::: Irho %4d (icollect %3d) maxvm %.4e, maxu %.4e, maxv %.4e" % 
                     (
                         ibnd, irho, icollect, 
@@ -292,16 +300,19 @@ class femDataGenFilterCut:
                     rhopath = os.path.join(dir,'rho%010d.dat'%(ibnd))
                     respath = os.path.join(dir,'res%010d.dat'%(ibnd))
                     vmpath = os.path.join(dir,'vm%010d.dat'%(ibnd))
+                    dpath = os.path.join(dir,'da%010d.dat'%(ibnd))
                     self.data[ibnd][0].tofile(bndpath)
                     self.data[ibnd][1].tofile(rhopath)
                     self.data[ibnd][2].tofile(respath)
                     self.data[ibnd][3].tofile(vmpath)
+                    self.data[ibnd][4].tofile(dpath)
         else:
             brrvpath = os.path.join(dir,'brrv_%s.npz'%(stamp))
             np.savez(brrvpath, bnd = self.bnddata, 
                                         rho = self.rhodata, 
                                         res = self.resdata, 
-                                        vm = self.vmdata)
+                                        vm = self.vmdata, 
+                                        da = self.drhodABdata)
 
     def loadData(self, dir, old_sav=False, seqTarget=0):
         dirs = os.listdir(dir)
@@ -324,11 +335,13 @@ class femDataGenFilterCut:
                 rhopath = os.path.join(dir,'rho%010d.dat'%(ibnd))
                 respath = os.path.join(dir,'res%010d.dat'%(ibnd))
                 vmpath = os.path.join(dir,'vm%010d.dat'%(ibnd))
+                dapath = os.path.join(dir,'da%010d.dat'%(ibnd))
                 bnddata = np.reshape(np.fromfile(bndpath,dtype=np.float32,count=-1),newshape=(self.ny+1,self.nx+1,3))
                 rhodata = np.reshape(np.fromfile(rhopath,dtype=np.float32,count=-1),newshape=(self.ny,self.nx,1,-1))
                 resdata = np.reshape(np.fromfile(respath,dtype=np.float32,count=-1),newshape=(self.ny+1,self.nx+1,2,-1))
                 vmdata = np.reshape(np.fromfile(vmpath,dtype=np.float32,count=-1),newshape=(self.ny,self.nx,1,-1))
-                self.data.append((bnddata,rhodata,resdata,vmdata))
+                drhoABdata = np.reshape(np.fromfile(dapath,dtype=np.float32,count=-1),newshape=(self.ny,self.nx,1,-1))
+                self.data.append((bnddata,rhodata,resdata,vmdata, drhoABdata))
             print(maxdigit)
 
         else:
@@ -348,12 +361,13 @@ class femDataGenFilterCut:
             self.rhodata = dataLoad['rho']
             self.resdata = dataLoad['res']
             self.vmdata = dataLoad['vm']
+            # self.drhodABdata = dataLoad['da']
             self.datanbnd = np.size(self.bnddata, axis=4)
             self.datanrho = np.size(self.rhodata, axis=3)
             if(self.nx != np.size(self.rhodata, axis=1) or self.ny != np.size(self.rhodata, axis=0)):
                 raise(Exception('data generator incompatible with datafile nx ny'))
     
-    def old2new(self):
+    def old2new(self): # do not support dadata
         nbnd = len(self.data)
         nrho = np.size(self.data[0][1], axis=3)
 
@@ -368,7 +382,7 @@ class femDataGenFilterCut:
             self.resdata[:,:,:,:,ibnd] = self.data[ibnd][2]
             self.vmdata[:,:,:,:,ibnd] = self.data[ibnd][3]
 
-    def getOneCase(self, ibnd, irho) -> Dict:
+    def getOneCase(self, ibnd, irho, useda = True) -> Dict:
         if(ibnd <0 or ibnd >= self.datanbnd):
             raise(ValueError('ibnd out of range [0,%d)'%(self.datanbnd)))
         if(irho <0 or irho >= self.datanrho):
@@ -383,8 +397,12 @@ class femDataGenFilterCut:
         caseret['u'  ]= self.resdata[:,:,0,irho,ibnd]
         caseret['v'  ]= self.resdata[:,:,1,irho,ibnd]
         caseret['vm' ]= self.vmdata[:,:,0,irho,ibnd]
+        if(useda):
+            caseret['da' ]= self.drhodABdata[:,:,0,irho,ibnd]
 
         return caseret
+
+    
 
 
 
