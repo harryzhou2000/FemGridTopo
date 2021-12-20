@@ -1,0 +1,1 @@
+python ./runDataGen.py --seed=30002 --name=OPT01 --nbnd=128 --Static   

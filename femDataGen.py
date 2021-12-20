@@ -13,7 +13,7 @@ def caseStamp():
     return '%d_%d'%(round(time.time()), os.getpid())
 
 class femDataGenFilterCut:
-    def __init__(self,nx=64,ny=64,passes=[32,40,48,56,64],nskew=9,maxskew=10,ndir=8, opterSeq = False) -> None:
+    def __init__(self,nx=64,ny=64,passes=[32,40,48,56,64],nskew=9,maxskew=10,ndir=8, opterSeq = False, static = False) -> None:
         self.nx = nx
         self.ny = ny
         self.rhogen = femRandInput.randRhoFilterGen(nx=nx,ny=ny,passes=passes,nskew=nskew,
@@ -43,11 +43,31 @@ class femDataGenFilterCut:
         self.bndgen.min_maxufixinterval = 0.3
         self.opterSeq = opterSeq
         self.opterMax = 75
+
+        #support
+        self.supportSize = 0.1
+
+
+        self.static = static
         
         
         pass
 
     def genNextBnd(self, fixth=0.0, fixflt=0.6, forcecent=0.6, forceflt=0.8):
+        if(self.static):
+            self.fixData = np.zeros((self.ny+1,self.nx+1))
+            self.fx = np.zeros((self.ny+1,self.nx+1))
+            self.fy = np.zeros((self.ny+1, self.nx+1))
+            self.fy[-1,:] = 1.0
+            self.fixData[:,-1] = 1.0
+            self.fixData[:, 0] = 1.0
+
+            self.fix = np.empty_like(self.fixData)
+            self.fix.fill(np.nan)
+            self.fix[self.fixData == 1.0] = 0.0
+
+            self.bndgen.currentBinaryDouble = self.fixData
+            return
         portion, minuinterval, maxuinterval = -1.0,-1.0,-1.0
         while((portion < self.min_fixportion or portion > self.max_fixportion)
             or (minuinterval < self.min_minufixinterval or maxuinterval < self.min_maxufixinterval)):
@@ -76,7 +96,7 @@ class femDataGenFilterCut:
         self.rhogen.genNext()
         self.rho = self.rhogen.getRandCutDown(datalo=0.5-rhocent,datahi=0.5+rhocent,fltrange=rhoflt)
         if(useSupport):
-            self.rho = np.maximum(self.rho, self.fixRhoSupport)
+            self.rho = np.maximum(self.rho, self.fixRhoSupport * self.supportSize)
 
     def fillData(self, nbnd, nrho, old_sav=False):
         self.datanbnd = nbnd
@@ -95,6 +115,7 @@ class femDataGenFilterCut:
 
         if not self.opterSeq:
             for ibnd in range(nbnd):
+                Tstart = time.perf_counter()
                 if old_sav:
                     bnddata = np.empty(shape=(self.ny+1,self.nx+1,3), dtype=np.float32)
                     rhodata = np.empty(shape=(self.ny,self.nx,1,nrho), dtype=np.float32)
@@ -165,6 +186,9 @@ class femDataGenFilterCut:
 
                     print("  Ibnd %4d ::: Irho %4d (ntri %2d) maxvm %.4e, maxu %.4e, maxv %.4e" % 
                     (ibnd, irho, ntrial, fem.VM.max(), np.abs(fem.uarray).max(), np.abs(fem.varray.max())))
+                Tend = time.perf_counter()
+                Tbnd = Tend - Tstart
+                print("Ibnd %d, bndtime [%.3g], ETA [%.3g]" % (ibnd, Tbnd, Tbnd * (nbnd - ibnd - 1 )))
                 if(old_sav):   
                     self.data.append((bnddata,rhodata,resdata,vmdata,drhodABdata))
         else:
