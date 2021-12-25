@@ -18,18 +18,24 @@ import time
 
 torch.manual_seed(124)
 params = {}
-params['batch_size'] = 128
+params['batch_size'] = 32
 params['device'] = 'cuda'
 params['lr'] = 1.0e-1
-params['nepoch'] = 20
+params['nepoch'] = 30
 params['gamma'] = 0.8
 params['weight_decay'] = 0e-4
-params['strideSave'] = 10000
+params['strideSave'] = 1000
+label='CNN_1_SAttention_PE'
+
 
 #####################################
 loader = dataReader.Reader(params['batch_size'], preserve=['bnd', 'rho', 'res', 'PI_AB'],
-                           device=params['device'], trainPortion=0.8)
-loader.ReadFile('data/test2', 1 )
+                           device=params['device'], trainPortion=1, delayed=False)
+loader.ReadFile('data/test2', 0 )
+
+loader1 = dataReader.Reader(params['batch_size'], preserve=['bnd', 'rho', 'res', 'PI_AB'],
+                           device=params['device'], trainPortion=1/8, delayed=False)
+loader1.ReadFile('data/test2', 1 )
 
 
 print('=== Data Loaded ===')
@@ -56,11 +62,13 @@ lossHistEpoch = []
 lossHistEpochVal = []
 
 
-saveDir = os.path.join('savesPGA', gradientGenerator.caseStamp())
-os.system('mkdir '+saveDir)
+saveDir = os.path.join('savesPGA', gradientGenerator.caseStamp() + label)
+
 if os.name =='nt': # windows or not
+    os.system('mkdir '+saveDir)
     os.system('copy *.py '+saveDir)
 else:
+    os.system('mkdir -p '+saveDir)
     os.system('cp *.py '+saveDir)
 torch.save(params, os.path.join(saveDir, 'Params.pt'))
 torch.save(model, os.path.join(saveDir, 'Original.pt'))
@@ -84,11 +92,11 @@ for iepoch in range(params['nepoch']):
         torch.save(model.state_dict(), os.path.join(saveDir, saveNames[-1]))
         print('::: Saved Model :::')
     # loader.state = 'test'
-    # Llist, lepoch = gradientGenerator.runOneEpochPA(
-    #     model, iter(loader), iepoch, iftrain=False)
-    # print('\n=== Validation DONE ===')
-    # print('Validation :: :: loss [%.6e]\n' % (
-    #     lepoch))
+    Llist, lepoch = gradientGenerator.runOneEpochPA(
+        model, iter(loader1), iepoch, iftrain=False)
+    print('\n=== Validation DONE ===')
+    print('Validation :: :: loss \x1b[1;34m[%.6e]\x1b[0m\n' % (
+        lepoch))
     print('=== === === Epoch Time [%12.6g] === === ==='%(time.perf_counter()-start))
     print('=== === === === === === === === === === ===\n\n')
     lossHistEpochVal.append(lepoch)

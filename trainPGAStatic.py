@@ -25,7 +25,7 @@ params['nepoch'] = 30
 params['gamma'] = 0.8
 params['weight_decay'] = 0e-4
 params['strideSave'] = 1
-label='CNN_1s_MAttention_PE_SQRT'
+label='CNN_Ds_0'
 
 
 #####################################
@@ -63,10 +63,12 @@ lossHistEpochVal = []
 
 
 saveDir = os.path.join('savesPGAStatic', gradientGenerator.caseStamp() + label)
-os.system('mkdir '+saveDir)
+
 if os.name =='nt': # windows or not
+    os.system('mkdir '+saveDir)
     os.system('copy *.py '+saveDir)
 else:
+    os.system('mkdir -p '+saveDir)
     os.system('cp *.py '+saveDir)
 torch.save(params, os.path.join(saveDir, 'Params.pt'))
 torch.save(model, os.path.join(saveDir, 'Original.pt'))

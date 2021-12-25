@@ -33,7 +33,7 @@ label='CNN_1s_MAttention_PE_SQRT'
 
 loader1 = dataReader.Reader(params['batch_size'], preserve=['bnd', 'rho', 'res', 'PI_AB'],
                            device=params['device'], trainPortion=1, delayed=False)
-loader1.ReadFile('data/test_static', 3 )
+loader1.ReadFile('data/test_static', -1 )
 
 
 runs = os.listdir('savesPGAStatic')
